@@ -1,92 +1,190 @@
-"""
-cli.py  –  Interactive command-line interface for the Stock Tracker
-Run:  python cli.py
-"""
-
+import argparse
 import sys
-from stock_tracker import init_db, add_alert, get_active_alerts, get_price
 
-conn = init_db()
-
-
-def menu():
-    print("""
-╔══════════════════════════════════╗
-║   📈  Stock Tracker CLI          ║
-╠══════════════════════════════════╣
-║  1. View active alerts           ║
-║  2. Add a new alert              ║
-║  3. Check price right now        ║
-║  4. View price history           ║
-║  5. Exit                         ║
-╚══════════════════════════════════╝
-""")
-
-
-def view_alerts():
-    alerts = get_active_alerts(conn)
-    if not alerts:
-        print("  No active alerts.")
-        return
-    print(f"\n  {'ID':<5} {'Symbol':<8} {'Type':<8} {'Threshold':>10}")
-    print("  " + "─" * 35)
-    for a in alerts:
-        print(f"  {a['id']:<5} {a['symbol']:<8} {a['alert_type']:<8} ${a['threshold']:>9.2f}")
-
-
-def add_alert_interactive():
-    symbol    = input("  Ticker symbol (e.g. AAPL): ").strip().upper()
-    kind      = input("  Alert type – above / below: ").strip().lower()
-    threshold = float(input("  Price threshold (e.g. 200.00): $").strip())
-    if kind not in ("above", "below"):
-        print("  Invalid type. Use 'above' or 'below'.")
-        return
-    add_alert(conn, symbol, kind, threshold)
-    print(f"  ✅ Alert saved: {symbol} {kind} ${threshold:.2f}")
-
-
-def check_price_now():
-    symbol = input("  Ticker symbol: ").strip().upper()
-    price  = get_price(symbol)
-    if price:
-        print(f"  {symbol}: ${price:.2f}")
-
-
-def view_history():
-    symbol = input("  Ticker symbol: ").strip().upper()
-    cur = conn.execute(
-        "SELECT price, recorded_at FROM price_history "
-        "WHERE symbol = ? ORDER BY recorded_at DESC LIMIT 20",
-        (symbol,),
-    )
-    rows = cur.fetchall()
-    if not rows:
-        print("  No history found.")
-        return
-    print(f"\n  {'Price':>10}   {'Time'}")
-    print("  " + "─" * 35)
-    for price, ts in rows:
-        print(f"  ${price:>9.2f}   {ts}")
+from stock_tracker import (
+    create_database,
+    fetch_stock_price,
+    save_stock_price,
+    get_history,
+    add_alert,
+    display_stock,
+    display_history,
+    track
+)
 
 
 def main():
-    while True:
-        menu()
-        choice = input("  Choose [1-5]: ").strip()
-        if choice == "1":
-            view_alerts()
-        elif choice == "2":
-            add_alert_interactive()
-        elif choice == "3":
-            check_price_now()
-        elif choice == "4":
-            view_history()
-        elif choice == "5":
-            print("  Goodbye! 👋")
-            sys.exit(0)
+
+    parser = argparse.ArgumentParser(
+        description="Stock Price Tracker and Alert System"
+    )
+
+    subparsers = parser.add_subparsers(
+        dest="command"
+    )
+
+    # ========================================================
+    # PRICE
+    # ========================================================
+
+    price_parser = subparsers.add_parser(
+        "price",
+        help="Get the latest stock price"
+    )
+
+    price_parser.add_argument(
+        "symbol",
+        help="Stock symbol, for example AAPL"
+    )
+
+    # ========================================================
+    # TRACK
+    # ========================================================
+
+    track_parser = subparsers.add_parser(
+        "track",
+        help="Start continuous stock tracking"
+    )
+
+    # ========================================================
+    # HISTORY
+    # ========================================================
+
+    history_parser = subparsers.add_parser(
+        "history",
+        help="Display stored stock history"
+    )
+
+    history_parser.add_argument(
+        "symbol",
+        help="Stock symbol"
+    )
+
+    history_parser.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Number of records to display"
+    )
+
+    # ========================================================
+    # ALERT
+    # ========================================================
+
+    alert_parser = subparsers.add_parser(
+        "alert",
+        help="Create a stock price alert"
+    )
+
+    alert_parser.add_argument(
+        "symbol",
+        help="Stock symbol"
+    )
+
+    alert_parser.add_argument(
+        "condition",
+        choices=["above", "below"],
+        help="Alert condition"
+    )
+
+    alert_parser.add_argument(
+        "price",
+        type=float,
+        help="Alert threshold"
+    )
+
+    args = parser.parse_args()
+
+    create_database()
+
+    # ========================================================
+    # NO COMMAND
+    # ========================================================
+
+    if not args.command:
+
+        parser.print_help()
+        sys.exit(0)
+
+    # ========================================================
+    # PRICE
+    # ========================================================
+
+    if args.command == "price":
+
+        stock = fetch_stock_price(
+            args.symbol
+        )
+
+        if stock:
+            display_stock(stock)
+
         else:
-            print("  Invalid choice.")
-        input("\n  Press Enter to continue...")
+            print(
+                f"No stock data found for "
+                f"{args.symbol.upper()}."
+            )
+
+    # ========================================================
+    # TRACK
+    # ========================================================
+
+    elif args.command == "track":
+
+        track()
+
+    # ========================================================
+    # HISTORY
+    # ========================================================
+
+    elif args.command == "history":
+
+        if args.limit <= 0:
+
+            print(
+                "Error: limit must be greater than 0."
+            )
+
+            sys.exit(1)
+
+        rows = get_history(
+            args.symbol,
+            args.limit
+        )
+
+        display_history(rows)
+
+    # ========================================================
+    # ALERT
+    # ========================================================
+
+    elif args.command == "alert":
+
+        if args.price <= 0:
+
+            print(
+                "Error: price must be greater than 0."
+            )
+
+            sys.exit(1)
+
+        add_alert(
+            args.symbol,
+            args.condition,
+            args.price
+        )
+
+        print()
+        print("Alert created successfully.")
+        print(
+            f"Symbol    : {args.symbol.upper()}"
+        )
+        print(
+            f"Condition : {args.condition}"
+        )
+        print(
+            f"Threshold : ${args.price:.2f}"
+        )
 
 
 if __name__ == "__main__":
